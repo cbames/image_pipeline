@@ -54,6 +54,10 @@ class RegisterNodelet : public nodelet::Nodelet
   ros::NodeHandlePtr nh_depth_, nh_rgb_;
   boost::shared_ptr<image_transport::ImageTransport> it_depth_;
   
+  // Additions for native resolution registration 
+  bool native_resolution_; 
+  float scale_x_, scale_y_; 
+
   // Subscriptions
   image_transport::SubscriberFilter sub_depth_image_;
   message_filters::Subscriber<sensor_msgs::CameraInfo> sub_depth_info_, sub_rgb_info_;
@@ -94,6 +98,7 @@ void RegisterNodelet::onInit()
   // Read parameters
   int queue_size;
   private_nh.param("queue_size", queue_size, 5);
+  private_nh.param("native_resolution", native_resolution_, false); 
 
   // Synchronize inputs. Topic subscriptions happen on demand in the connection callback.
   sync_.reset( new Synchronizer(SyncPolicy(queue_size), sub_depth_image_, sub_depth_info_, sub_rgb_info_) );
@@ -170,8 +175,19 @@ void RegisterNodelet::imageCb(const sensor_msgs::ImageConstPtr& depth_image_msg,
   registered_msg->encoding        = depth_image_msg->encoding;
   
   cv::Size resolution = rgb_model_.reducedResolution();
-  registered_msg->height = resolution.height;
-  registered_msg->width  = resolution.width;
+  if(native_resolution_)
+  {
+    scale_x_ = float(depth_image_msg->width)/float(resolution.width);
+    scale_y_ = float(depth_image_msg->height)/float(resolution.height);  
+    registered_msg->height = depth_image_msg->height;
+    registered_msg->width  = depth_image_msg->width; 
+  }  
+  else
+  {
+    registered_msg->height = resolution.height;
+    registered_msg->width  = resolution.width;
+  }
+
   // step and data set in convert(), depend on depth data type
 
   if (depth_image_msg->encoding == enc::TYPE_16UC1)
@@ -211,9 +227,33 @@ void RegisterNodelet::convert(const sensor_msgs::ImageConstPtr& depth_msg,
   double inv_depth_fy = 1.0 / depth_model_.fy();
   double depth_cx = depth_model_.cx(), depth_cy = depth_model_.cy();
   double depth_Tx = depth_model_.Tx(), depth_Ty = depth_model_.Ty();
-  double rgb_fx = rgb_model_.fx(), rgb_fy = rgb_model_.fy();
-  double rgb_cx = rgb_model_.cx(), rgb_cy = rgb_model_.cy();
-  double rgb_Tx = rgb_model_.Tx(), rgb_Ty = rgb_model_.Ty();
+  double rgb_fx, rgb_fy;
+  double rgb_cx, rgb_cy;
+  double rgb_Tx, rgb_Ty;
+
+  if(native_resolution_)
+  {
+    rgb_fx = rgb_model_.fx()*scale_x_; 
+    rgb_cx = rgb_model_.cx()*scale_x_;
+    rgb_Tx = rgb_model_.Tx()*scale_x_; 
+
+    rgb_fy = rgb_model_.fy()*scale_y_; 
+    rgb_cy = rgb_model_.cy()*scale_y_;
+    rgb_Ty = rgb_model_.Ty()*scale_y_; 
+  }
+  else
+  {
+    rgb_fx = rgb_model_.fx(); 
+    rgb_cx = rgb_model_.cx();
+    rgb_Tx = rgb_model_.Tx(); 
+    
+    rgb_fy = rgb_model_.fy(); 
+    rgb_cy = rgb_model_.cy();
+    rgb_Ty = rgb_model_.Ty(); 
+  }
+
+
+
   
   // Transform the depth values into the RGB frame
   /// @todo When RGB is higher res, interpolate by rasterizing depth triangles onto the registered image  
